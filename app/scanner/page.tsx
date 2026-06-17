@@ -7,78 +7,14 @@ import { NotFoundException } from '@zxing/library'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { searchByISBN, type BookData } from '@/lib/book-api'
+import {
+  attachStreamToVideo,
+  getCameraErrorMessage,
+  isIosSafari,
+  pickRearCameraStream,
+  requestCameraStream,
+} from '@/lib/scanner/camera'
 import { createClient } from '@/lib/supabase/client'
-
-const REAR_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
-  video: { facingMode: { ideal: 'environment' } },
-}
-
-const FALLBACK_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
-  video: true,
-}
-
-async function acquireCameraStream(): Promise<MediaStream> {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('NO_MEDIA_DEVICES')
-  }
-
-  const attempts = [REAR_CAMERA_CONSTRAINTS, FALLBACK_CAMERA_CONSTRAINTS]
-  let lastError: unknown
-
-  for (const constraints of attempts) {
-    try {
-      return await navigator.mediaDevices.getUserMedia(constraints)
-    } catch (error) {
-      lastError = error
-    }
-  }
-
-  throw lastError
-}
-
-function getCameraErrorMessage(error: unknown): {
-  message: string
-  denied: boolean
-} {
-  if (error instanceof DOMException) {
-    if (
-      error.name === 'NotAllowedError' ||
-      error.name === 'PermissionDeniedError'
-    ) {
-      return {
-        message:
-          'Permissão de câmera negada. Toque em "Permitir câmera" para solicitar novamente ou libere o acesso nas configurações do navegador.',
-        denied: true,
-      }
-    }
-
-    if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-      return {
-        message: 'Nenhuma câmera encontrada neste dispositivo.',
-        denied: false,
-      }
-    }
-
-    if (error.name === 'NotReadableError') {
-      return {
-        message: 'A câmera está em uso por outro aplicativo.',
-        denied: false,
-      }
-    }
-  }
-
-  if (error instanceof Error && error.message === 'NO_MEDIA_DEVICES') {
-    return {
-      message: 'Seu navegador não suporta acesso à câmera.',
-      denied: false,
-    }
-  }
-
-  return {
-    message: 'Não foi possível acessar a câmera.',
-    denied: false,
-  }
-}
 
 export default function ScannerPage() {
   const router = useRouter()
@@ -91,6 +27,7 @@ export default function ScannerPage() {
 
   const [scanning, setScanning] = useState(false)
   const [cameraActive, setCameraActive] = useState(false)
+  const [needsUserTap, setNeedsUserTap] = useState(true)
   const [bookData, setBookData] = useState<BookData | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -99,21 +36,6 @@ export default function ScannerPage() {
     'granted' | 'denied' | 'prompt'
   >('prompt')
   const [requestingPermission, setRequestingPermission] = useState(false)
-
-  const syncCameraPermission = useCallback(async () => {
-    try {
-      if (!navigator.permissions?.query) {
-        return 'prompt' as const
-      }
-
-      const status = await navigator.permissions.query({
-        name: 'camera' as PermissionName,
-      })
-      return status.state as 'granted' | 'denied' | 'prompt'
-    } catch {
-      return 'prompt' as const
-    }
-  }, [])
 
   const stopCamera = useCallback(async () => {
     scannerControlsRef.current?.stop()
@@ -136,58 +58,9 @@ export default function ScannerPage() {
 
     setCameraActive(false)
     setScanning(false)
+    setNeedsUserTap(true)
     processingRef.current = false
   }, [])
-
-  const startCameraRef = useRef<(() => Promise<void>) | null>(null)
-
-  const fetchBook = useCallback(
-    async (rawIsbn: string, restartCameraOnError = true) => {
-      const isbn = rawIsbn.replace(/[^0-9Xx]/g, '')
-
-      if (isbn.length < 10) {
-        setError('ISBN inválido')
-        if (restartCameraOnError) {
-          await startCameraRef.current?.()
-        }
-        return
-      }
-
-      setLoading(true)
-      setError(null)
-
-      const book = await searchByISBN(isbn)
-
-      if (!book) {
-        setError('Livro não encontrado. Tente outro ISBN ou busque manualmente.')
-        setLoading(false)
-        if (restartCameraOnError) {
-          await startCameraRef.current?.()
-        }
-        return
-      }
-
-      const { data: existente } = await supabase
-        .from('livros')
-        .select('id')
-        .eq('isbn', isbn)
-        .maybeSingle()
-
-      if (existente) {
-        setError('Este livro já está na sua estante')
-        setBookData(null)
-        setLoading(false)
-        if (restartCameraOnError) {
-          await startCameraRef.current?.()
-        }
-        return
-      }
-
-      setBookData(book)
-      setLoading(false)
-    },
-    [supabase],
-  )
 
   const startScanning = useCallback(
     async (
@@ -204,7 +77,7 @@ export default function ScannerPage() {
           const isbn = result.getText()
           navigator.vibrate?.(200)
           await stopCamera()
-          await fetchBook(isbn)
+          await fetchBookRef.current?.(isbn)
           return
         }
 
@@ -223,22 +96,61 @@ export default function ScannerPage() {
         onDecode,
       )
     },
-    [fetchBook, stopCamera],
+    [stopCamera],
   )
 
-  const startCamera = useCallback(async () => {
-    try {
-      setRequestingPermission(true)
-      setError(null)
-      processingRef.current = false
+  const fetchBookRef = useRef<
+    ((rawIsbn: string, restartCameraOnError?: boolean) => Promise<void>) | null
+  >(null)
 
-      if (!window.isSecureContext) {
-        setError(
-          'A câmera só funciona em conexão segura (HTTPS). Acesse o site por https://.',
-        )
+  const fetchBook = useCallback(
+    async (rawIsbn: string, restartCameraOnError = false) => {
+      const isbn = rawIsbn.replace(/[^0-9Xx]/g, '')
+
+      if (isbn.length < 10) {
+        setError('ISBN inválido')
+        if (restartCameraOnError) {
+          setNeedsUserTap(true)
+        }
         return
       }
 
+      setLoading(true)
+      setError(null)
+
+      const book = await searchByISBN(isbn)
+
+      if (!book) {
+        setError('Livro não encontrado. Toque em "Permitir câmera" para escanear outro.')
+        setLoading(false)
+        setNeedsUserTap(true)
+        return
+      }
+
+      const { data: existente } = await supabase
+        .from('livros')
+        .select('id')
+        .eq('isbn', isbn)
+        .maybeSingle()
+
+      if (existente) {
+        setError('Este livro já está na sua estante')
+        setBookData(null)
+        setLoading(false)
+        setNeedsUserTap(true)
+        return
+      }
+
+      setBookData(book)
+      setLoading(false)
+    },
+    [supabase],
+  )
+
+  fetchBookRef.current = fetchBook
+
+  const activateCamera = useCallback(async (streamPromise: Promise<MediaStream>) => {
+    try {
       if (!readerRef.current) {
         readerRef.current = new BrowserMultiFormatReader()
       }
@@ -250,17 +162,21 @@ export default function ScannerPage() {
 
       await stopCamera()
 
-      const stream = await acquireCameraStream()
-      streamRef.current = stream
-      video.srcObject = stream
+      let stream = await streamPromise
 
-      await video.play().catch(() => {
-        // Em alguns dispositivos o play() falha mesmo com permissão concedida.
-      })
+      const rearStream = await pickRearCameraStream(stream)
+      if (rearStream) {
+        stream.getTracks().forEach((track) => track.stop())
+        stream = rearStream
+      }
+
+      streamRef.current = stream
+      await attachStreamToVideo(video, stream)
 
       setCameraPermission('granted')
       setCameraActive(true)
       setScanning(true)
+      setNeedsUserTap(false)
 
       await startScanning(readerRef.current, video, stream)
     } catch (err) {
@@ -270,23 +186,52 @@ export default function ScannerPage() {
       const { message, denied } = getCameraErrorMessage(err)
       setError(message)
       setCameraPermission(denied ? 'denied' : 'prompt')
+      setNeedsUserTap(true)
     } finally {
       setRequestingPermission(false)
     }
   }, [startScanning, stopCamera])
 
-  startCameraRef.current = startCamera
+  /**
+   * Handler de toque — dispara getUserMedia de forma síncrona (obrigatório no iOS).
+   */
+  const handleEnableCamera = useCallback(() => {
+    if (requestingPermission || cameraActive) {
+      return
+    }
+
+    if (!window.isSecureContext) {
+      setError(
+        'A câmera no celular só funciona via HTTPS. Abra o link https:// do app na Vercel.',
+      )
+      return
+    }
+
+    setRequestingPermission(true)
+    setError(null)
+    processingRef.current = false
+
+    const streamPromise = requestCameraStream()
+    void activateCamera(streamPromise)
+  }, [activateCamera, cameraActive, requestingPermission])
 
   useEffect(() => {
     readerRef.current = new BrowserMultiFormatReader()
 
-    void syncCameraPermission().then(setCameraPermission)
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        void stopCamera()
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
 
     return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       void stopCamera()
       readerRef.current = null
     }
-  }, [stopCamera, syncCameraPermission])
+  }, [stopCamera])
 
   const handleManualISBN = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -338,22 +283,20 @@ export default function ScannerPage() {
     }
   }
 
-  // Show book confirmation if found
   if (bookData) {
     return (
-      <div className="min-h-screen bg-background">
-        <div className="container mx-auto px-4 py-8">
+      <div className="min-h-[100dvh] bg-background pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <div className="container mx-auto px-4 py-6">
           <Link href="/">
-            <Button variant="outline" className="mb-6">
+            <Button variant="outline" className="mb-4 min-h-11">
               ← Voltar
             </Button>
           </Link>
 
           <div className="max-w-2xl mx-auto">
-            <h1 className="text-3xl font-bold mb-8">Confirmar Livro</h1>
+            <h1 className="text-2xl font-bold mb-6">Confirmar Livro</h1>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* Book Cover */}
+            <div className="grid grid-cols-1 gap-6">
               <div className="flex justify-center">
                 <img
                   src={bookData.capaUrl}
@@ -366,7 +309,6 @@ export default function ScannerPage() {
                 />
               </div>
 
-              {/* Book Details */}
               <div className="space-y-4">
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">
@@ -418,22 +360,24 @@ export default function ScannerPage() {
                   </div>
                 )}
 
-                <div className="flex gap-4 pt-6">
+                <div className="flex flex-col sm:flex-row gap-3 pt-4">
                   <Button
-                    onClick={async () => {
+                    type="button"
+                    onClick={() => {
                       setBookData(null)
                       setError(null)
-                      await startCamera()
+                      setNeedsUserTap(true)
                     }}
                     variant="outline"
-                    className="flex-1"
+                    className="flex-1 min-h-12"
                     disabled={saving}
                   >
-                    Cancelar
+                    Escanear outro
                   </Button>
                   <Button
+                    type="button"
                     onClick={handleSaveBook}
-                    className="flex-1"
+                    className="flex-1 min-h-12"
                     disabled={saving}
                   >
                     {saving ? 'Salvando...' : 'Confirmar e Salvar'}
@@ -447,46 +391,48 @@ export default function ScannerPage() {
     )
   }
 
-  // Camera/Manual Input View
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
+    <div className="min-h-[100dvh] bg-background pb-[max(1rem,env(safe-area-inset-bottom))] overscroll-y-contain">
+      <div className="container mx-auto px-4 py-4">
         <Link href="/">
-          <Button variant="outline" className="mb-6">
+          <Button variant="outline" className="mb-4 min-h-11">
             ← Voltar
           </Button>
         </Link>
 
         <div className="max-w-2xl mx-auto">
-          <h1 className="text-3xl font-bold mb-8">Adicionar Livro</h1>
+          <h1 className="text-2xl font-bold mb-4">Adicionar Livro</h1>
 
-          {/* Camera View */}
-          <div className="mb-8">
-            <div className="relative bg-card rounded-lg overflow-hidden border">
+          <div className="mb-6">
+            <div className="relative bg-black rounded-xl overflow-hidden border aspect-[3/4] max-h-[55dvh] w-full">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
-                className="w-full h-96 object-cover"
+                disablePictureInPicture
+                className="absolute inset-0 h-full w-full object-cover"
               />
 
-              {!cameraActive && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-background/90 px-6 text-center">
-                  <p className="text-sm text-muted-foreground">
+              {needsUserTap && !cameraActive && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-background/95 px-5 text-center">
+                  <p className="text-sm text-muted-foreground leading-relaxed">
                     {cameraPermission === 'denied'
-                      ? 'O acesso à câmera foi negado. Toque no botão abaixo para solicitar novamente.'
-                      : 'Toque em "Permitir câmera" para abrir o pedido de permissão do navegador.'}
+                      ? isIosSafari()
+                        ? 'Câmera bloqueada. Toque em "aA" na barra do Safari → Configurações do site → Câmera → Permitir.'
+                        : 'Câmera bloqueada. Toque no cadeado na barra de endereço → Câmera → Permitir.'
+                      : 'Aponte para o código de barras do livro. Toque abaixo para ativar a câmera traseira.'}
                   </p>
                   <Button
                     type="button"
-                    onClick={() => void startCamera()}
+                    onClick={handleEnableCamera}
                     disabled={requestingPermission}
+                    className="min-h-12 px-8 text-base touch-manipulation"
                   >
                     {requestingPermission
-                      ? 'Solicitando permissão...'
+                      ? 'Abrindo câmera...'
                       : cameraPermission === 'denied'
-                        ? 'Solicitar permissão novamente'
+                        ? 'Tentar novamente'
                         : 'Permitir câmera'}
                   </Button>
                 </div>
@@ -494,84 +440,75 @@ export default function ScannerPage() {
 
               {cameraActive && scanning && (
                 <div className="absolute inset-0 pointer-events-none">
-                  <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-4 border-primary rounded-lg opacity-50"></div>
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-36 border-4 border-primary rounded-lg opacity-70" />
+                  <p className="absolute bottom-4 inset-x-0 text-center text-xs text-white drop-shadow-md px-4">
+                    Alinhe o código de barras dentro da moldura
+                  </p>
                 </div>
               )}
             </div>
 
             {cameraActive && scanning && (
-              <Button className="w-full mt-4" disabled={loading || requestingPermission}>
-                {loading ? 'Processando...' : 'Escaneando...'}
-              </Button>
-            )}
-
-            {cameraPermission === 'denied' && !cameraActive && (
-              <div className="mt-4 p-4 bg-destructive/10 text-destructive rounded-lg">
-                <p className="text-sm font-medium">Permissão de câmera negada</p>
-                <p className="text-xs mt-1">
-                  No Chrome/Safari: toque no cadeado na barra de endereço → Câmera
-                  → Permitir. Depois toque em &quot;Solicitar permissão novamente&quot;.
-                </p>
-                <Button
-                  type="button"
-                  onClick={() => void startCamera()}
-                  variant="outline"
-                  className="mt-3"
-                  disabled={requestingPermission}
-                >
-                  {requestingPermission
-                    ? 'Solicitando permissão...'
-                    : 'Solicitar permissão novamente'}
-                </Button>
-              </div>
+              <p className="mt-3 text-center text-sm text-muted-foreground">
+                {loading ? 'Buscando livro...' : 'Escaneando automaticamente...'}
+              </p>
             )}
 
             {error && (
               <div className="mt-4 p-4 bg-destructive/10 text-destructive rounded-lg">
                 <p className="text-sm">{error}</p>
+                {needsUserTap && !cameraActive && (
+                  <Button
+                    type="button"
+                    onClick={handleEnableCamera}
+                    variant="outline"
+                    className="mt-3 w-full min-h-11 touch-manipulation"
+                    disabled={requestingPermission}
+                  >
+                    {requestingPermission ? 'Abrindo câmera...' : 'Permitir câmera'}
+                  </Button>
+                )}
               </div>
             )}
           </div>
 
-          {/* OR Divider */}
-          <div className="relative mb-8">
+          <div className="relative mb-6">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t"></div>
+              <div className="w-full border-t" />
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-background text-muted-foreground">
-                ou
-              </span>
+              <span className="px-2 bg-background text-muted-foreground">ou</span>
             </div>
           </div>
 
-          {/* Manual ISBN Input */}
           <form onSubmit={handleManualISBN} className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-2">
-                Inserir ISBN Manualmente
+                Inserir ISBN manualmente
               </label>
               <input
                 type="text"
                 name="isbn"
-                placeholder="Ex: 978-8535929706"
-                className="w-full px-4 py-2 border rounded-lg bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                inputMode="numeric"
+                autoComplete="off"
+                enterKeyHint="search"
+                placeholder="Ex: 9788535929706"
+                className="w-full min-h-12 px-4 py-2 text-base border rounded-lg bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                ISBN de 10 ou 13 dígitos (hífens opcionais)
+                ISBN de 10 ou 13 dígitos
               </p>
             </div>
 
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="w-full min-h-12 text-base" disabled={loading}>
               {loading ? 'Buscando...' : 'Buscar Livro'}
             </Button>
           </form>
 
-          {/* Alternative: Manual Search */}
-          <div className="mt-8 pt-8 border-t">
+          <div className="mt-6 pt-6 border-t">
             <Link href="/search">
-              <Button variant="outline" className="w-full">
-                Buscar Manualmente por Título/Autor →
+              <Button variant="outline" className="w-full min-h-12">
+                Buscar por título ou autor →
               </Button>
             </Link>
           </div>
