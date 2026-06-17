@@ -10,11 +10,74 @@ import { searchByISBN, type BookData } from '@/lib/book-api'
 import { createClient } from '@/lib/supabase/client'
 
 const REAR_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
-  video: { facingMode: { exact: 'environment' } },
+  video: { facingMode: { ideal: 'environment' } },
 }
 
 const FALLBACK_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
-  video: { facingMode: { ideal: 'environment' } },
+  video: true,
+}
+
+async function acquireCameraStream(): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('NO_MEDIA_DEVICES')
+  }
+
+  const attempts = [REAR_CAMERA_CONSTRAINTS, FALLBACK_CAMERA_CONSTRAINTS]
+  let lastError: unknown
+
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints)
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  throw lastError
+}
+
+function getCameraErrorMessage(error: unknown): {
+  message: string
+  denied: boolean
+} {
+  if (error instanceof DOMException) {
+    if (
+      error.name === 'NotAllowedError' ||
+      error.name === 'PermissionDeniedError'
+    ) {
+      return {
+        message:
+          'Permissão de câmera negada. Toque em "Permitir câmera" para solicitar novamente ou libere o acesso nas configurações do navegador.',
+        denied: true,
+      }
+    }
+
+    if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+      return {
+        message: 'Nenhuma câmera encontrada neste dispositivo.',
+        denied: false,
+      }
+    }
+
+    if (error.name === 'NotReadableError') {
+      return {
+        message: 'A câmera está em uso por outro aplicativo.',
+        denied: false,
+      }
+    }
+  }
+
+  if (error instanceof Error && error.message === 'NO_MEDIA_DEVICES') {
+    return {
+      message: 'Seu navegador não suporta acesso à câmera.',
+      denied: false,
+    }
+  }
+
+  return {
+    message: 'Não foi possível acessar a câmera.',
+    denied: false,
+  }
 }
 
 export default function ScannerPage() {
@@ -23,9 +86,11 @@ export default function ScannerPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
   const scannerControlsRef = useRef<{ stop: () => void } | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
   const processingRef = useRef(false)
 
   const [scanning, setScanning] = useState(false)
+  const [cameraActive, setCameraActive] = useState(false)
   const [bookData, setBookData] = useState<BookData | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -53,14 +118,23 @@ export default function ScannerPage() {
   const stopCamera = useCallback(async () => {
     scannerControlsRef.current?.stop()
     scannerControlsRef.current = null
-    readerRef.current?.reset()
 
-    if (videoRef.current?.srcObject) {
-      const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
-      tracks.forEach((track) => track.stop())
+    try {
+      ;(readerRef.current as { reset?: () => void } | null)?.reset?.()
+    } catch {
+      // reset pode não existir em todas as versões do ZXing
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+
+    if (videoRef.current) {
       videoRef.current.srcObject = null
     }
 
+    setCameraActive(false)
     setScanning(false)
     processingRef.current = false
   }, [])
@@ -116,7 +190,11 @@ export default function ScannerPage() {
   )
 
   const startScanning = useCallback(
-    async (reader: BrowserMultiFormatReader, video: HTMLVideoElement) => {
+    async (
+      reader: BrowserMultiFormatReader,
+      video: HTMLVideoElement,
+      stream: MediaStream,
+    ) => {
       const onDecode = async (
         result: { getText: () => string } | undefined,
         decodeError: unknown,
@@ -139,19 +217,11 @@ export default function ScannerPage() {
         }
       }
 
-      try {
-        scannerControlsRef.current = await reader.decodeFromConstraints(
-          REAR_CAMERA_CONSTRAINTS,
-          video,
-          onDecode,
-        )
-      } catch {
-        scannerControlsRef.current = await reader.decodeFromConstraints(
-          FALLBACK_CAMERA_CONSTRAINTS,
-          video,
-          onDecode,
-        )
-      }
+      scannerControlsRef.current = await reader.decodeFromStream(
+        stream,
+        video,
+        onDecode,
+      )
     },
     [fetchBook, stopCamera],
   )
@@ -161,6 +231,13 @@ export default function ScannerPage() {
       setRequestingPermission(true)
       setError(null)
       processingRef.current = false
+
+      if (!window.isSecureContext) {
+        setError(
+          'A câmera só funciona em conexão segura (HTTPS). Acesse o site por https://.',
+        )
+        return
+      }
 
       if (!readerRef.current) {
         readerRef.current = new BrowserMultiFormatReader()
@@ -173,36 +250,26 @@ export default function ScannerPage() {
 
       await stopCamera()
 
-      // Solicita permissão explicitamente antes do ZXing iniciar o stream
-      try {
-        const testStream = await navigator.mediaDevices.getUserMedia(
-          FALLBACK_CAMERA_CONSTRAINTS,
-        )
-        testStream.getTracks().forEach((track) => track.stop())
-      } catch (permissionError) {
-        const isDenied =
-          permissionError instanceof DOMException &&
-          (permissionError.name === 'NotAllowedError' ||
-            permissionError.name === 'PermissionDeniedError')
+      const stream = await acquireCameraStream()
+      streamRef.current = stream
+      video.srcObject = stream
 
-        setCameraPermission('denied')
-        setScanning(false)
-        setError(
-          isDenied
-            ? 'Permissão de câmera negada. Toque em "Permitir câmera" para solicitar novamente ou libere o acesso nas configurações do navegador.'
-            : 'Não foi possível acessar a câmera',
-        )
-        return
-      }
+      await video.play().catch(() => {
+        // Em alguns dispositivos o play() falha mesmo com permissão concedida.
+      })
 
       setCameraPermission('granted')
+      setCameraActive(true)
       setScanning(true)
-      await startScanning(readerRef.current, video)
+
+      await startScanning(readerRef.current, video, stream)
     } catch (err) {
       console.error('[scanner] Camera error:', err)
-      setError('Não foi possível acessar a câmera')
-      setCameraPermission('denied')
-      setScanning(false)
+      await stopCamera()
+
+      const { message, denied } = getCameraErrorMessage(err)
+      setError(message)
+      setCameraPermission(denied ? 'denied' : 'prompt')
     } finally {
       setRequestingPermission(false)
     }
@@ -213,38 +280,9 @@ export default function ScannerPage() {
   useEffect(() => {
     readerRef.current = new BrowserMultiFormatReader()
 
-    let permissionStatus: PermissionStatus | null = null
-
-    void (async () => {
-      const state = await syncCameraPermission()
-      setCameraPermission(state)
-
-      if (state === 'granted') {
-        await startCameraRef.current?.()
-      }
-    })()
-
-    navigator.permissions
-      ?.query({ name: 'camera' as PermissionName })
-      .then((status) => {
-        permissionStatus = status
-        status.onchange = () => {
-          const nextState = status.state as 'granted' | 'denied' | 'prompt'
-          setCameraPermission(nextState)
-
-          if (nextState === 'granted') {
-            void startCameraRef.current?.()
-          } else if (nextState === 'denied') {
-            void stopCamera()
-          }
-        }
-      })
-      .catch(() => {})
+    void syncCameraPermission().then(setCameraPermission)
 
     return () => {
-      if (permissionStatus) {
-        permissionStatus.onchange = null
-      }
       void stopCamera()
       readerRef.current = null
     }
@@ -433,15 +471,16 @@ export default function ScannerPage() {
                 className="w-full h-96 object-cover"
               />
 
-              {!scanning && cameraPermission !== 'granted' && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-background/90 px-6 text-center">
+              {!cameraActive && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-background/90 px-6 text-center">
                   <p className="text-sm text-muted-foreground">
                     {cameraPermission === 'denied'
-                      ? 'O acesso à câmera foi negado. Solicite a permissão novamente para escanear o código de barras.'
-                      : 'Permita o acesso à câmera para escanear o código de barras do livro.'}
+                      ? 'O acesso à câmera foi negado. Toque no botão abaixo para solicitar novamente.'
+                      : 'Toque em "Permitir câmera" para abrir o pedido de permissão do navegador.'}
                   </p>
                   <Button
-                    onClick={startCamera}
+                    type="button"
+                    onClick={() => void startCamera()}
                     disabled={requestingPermission}
                   >
                     {requestingPermission
@@ -453,28 +492,29 @@ export default function ScannerPage() {
                 </div>
               )}
 
-              {scanning && (
+              {cameraActive && scanning && (
                 <div className="absolute inset-0 pointer-events-none">
                   <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-4 border-primary rounded-lg opacity-50"></div>
                 </div>
               )}
             </div>
 
-            {cameraPermission === 'granted' && scanning && (
+            {cameraActive && scanning && (
               <Button className="w-full mt-4" disabled={loading || requestingPermission}>
                 {loading ? 'Processando...' : 'Escaneando...'}
               </Button>
             )}
 
-            {cameraPermission === 'denied' && !scanning && (
+            {cameraPermission === 'denied' && !cameraActive && (
               <div className="mt-4 p-4 bg-destructive/10 text-destructive rounded-lg">
                 <p className="text-sm font-medium">Permissão de câmera negada</p>
                 <p className="text-xs mt-1">
-                  Se o navegador não exibir o pedido de permissão, libere a câmera
-                  nas configurações do site.
+                  No Chrome/Safari: toque no cadeado na barra de endereço → Câmera
+                  → Permitir. Depois toque em &quot;Solicitar permissão novamente&quot;.
                 </p>
                 <Button
-                  onClick={startCamera}
+                  type="button"
+                  onClick={() => void startCamera()}
                   variant="outline"
                   className="mt-3"
                   disabled={requestingPermission}
