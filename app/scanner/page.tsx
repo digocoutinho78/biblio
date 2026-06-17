@@ -33,6 +33,22 @@ export default function ScannerPage() {
   const [cameraPermission, setCameraPermission] = useState<
     'granted' | 'denied' | 'prompt'
   >('prompt')
+  const [requestingPermission, setRequestingPermission] = useState(false)
+
+  const syncCameraPermission = useCallback(async () => {
+    try {
+      if (!navigator.permissions?.query) {
+        return 'prompt' as const
+      }
+
+      const status = await navigator.permissions.query({
+        name: 'camera' as PermissionName,
+      })
+      return status.state as 'granted' | 'denied' | 'prompt'
+    } catch {
+      return 'prompt' as const
+    }
+  }, [])
 
   const stopCamera = useCallback(async () => {
     scannerControlsRef.current?.stop()
@@ -142,6 +158,7 @@ export default function ScannerPage() {
 
   const startCamera = useCallback(async () => {
     try {
+      setRequestingPermission(true)
       setError(null)
       processingRef.current = false
 
@@ -156,14 +173,38 @@ export default function ScannerPage() {
 
       await stopCamera()
 
-      setScanning(true)
+      // Solicita permissão explicitamente antes do ZXing iniciar o stream
+      try {
+        const testStream = await navigator.mediaDevices.getUserMedia(
+          FALLBACK_CAMERA_CONSTRAINTS,
+        )
+        testStream.getTracks().forEach((track) => track.stop())
+      } catch (permissionError) {
+        const isDenied =
+          permissionError instanceof DOMException &&
+          (permissionError.name === 'NotAllowedError' ||
+            permissionError.name === 'PermissionDeniedError')
+
+        setCameraPermission('denied')
+        setScanning(false)
+        setError(
+          isDenied
+            ? 'Permissão de câmera negada. Toque em "Permitir câmera" para solicitar novamente ou libere o acesso nas configurações do navegador.'
+            : 'Não foi possível acessar a câmera',
+        )
+        return
+      }
+
       setCameraPermission('granted')
+      setScanning(true)
       await startScanning(readerRef.current, video)
     } catch (err) {
       console.error('[scanner] Camera error:', err)
       setError('Não foi possível acessar a câmera')
       setCameraPermission('denied')
       setScanning(false)
+    } finally {
+      setRequestingPermission(false)
     }
   }, [startScanning, stopCamera])
 
@@ -171,13 +212,43 @@ export default function ScannerPage() {
 
   useEffect(() => {
     readerRef.current = new BrowserMultiFormatReader()
-    void startCameraRef.current?.()
+
+    let permissionStatus: PermissionStatus | null = null
+
+    void (async () => {
+      const state = await syncCameraPermission()
+      setCameraPermission(state)
+
+      if (state === 'granted') {
+        await startCameraRef.current?.()
+      }
+    })()
+
+    navigator.permissions
+      ?.query({ name: 'camera' as PermissionName })
+      .then((status) => {
+        permissionStatus = status
+        status.onchange = () => {
+          const nextState = status.state as 'granted' | 'denied' | 'prompt'
+          setCameraPermission(nextState)
+
+          if (nextState === 'granted') {
+            void startCameraRef.current?.()
+          } else if (nextState === 'denied') {
+            void stopCamera()
+          }
+        }
+      })
+      .catch(() => {})
 
     return () => {
+      if (permissionStatus) {
+        permissionStatus.onchange = null
+      }
       void stopCamera()
       readerRef.current = null
     }
-  }, [stopCamera])
+  }, [stopCamera, syncCameraPermission])
 
   const handleManualISBN = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -362,6 +433,26 @@ export default function ScannerPage() {
                 className="w-full h-96 object-cover"
               />
 
+              {!scanning && cameraPermission !== 'granted' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-background/90 px-6 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    {cameraPermission === 'denied'
+                      ? 'O acesso à câmera foi negado. Solicite a permissão novamente para escanear o código de barras.'
+                      : 'Permita o acesso à câmera para escanear o código de barras do livro.'}
+                  </p>
+                  <Button
+                    onClick={startCamera}
+                    disabled={requestingPermission}
+                  >
+                    {requestingPermission
+                      ? 'Solicitando permissão...'
+                      : cameraPermission === 'denied'
+                        ? 'Solicitar permissão novamente'
+                        : 'Permitir câmera'}
+                  </Button>
+                </div>
+              )}
+
               {scanning && (
                 <div className="absolute inset-0 pointer-events-none">
                   <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-4 border-primary rounded-lg opacity-50"></div>
@@ -370,20 +461,27 @@ export default function ScannerPage() {
             </div>
 
             {cameraPermission === 'granted' && scanning && (
-              <Button className="w-full mt-4" disabled={loading}>
+              <Button className="w-full mt-4" disabled={loading || requestingPermission}>
                 {loading ? 'Processando...' : 'Escaneando...'}
               </Button>
             )}
 
-            {cameraPermission === 'denied' && (
+            {cameraPermission === 'denied' && !scanning && (
               <div className="mt-4 p-4 bg-destructive/10 text-destructive rounded-lg">
                 <p className="text-sm font-medium">Permissão de câmera negada</p>
+                <p className="text-xs mt-1">
+                  Se o navegador não exibir o pedido de permissão, libere a câmera
+                  nas configurações do site.
+                </p>
                 <Button
                   onClick={startCamera}
                   variant="outline"
                   className="mt-3"
+                  disabled={requestingPermission}
                 >
-                  Tentar Novamente
+                  {requestingPermission
+                    ? 'Solicitando permissão...'
+                    : 'Solicitar permissão novamente'}
                 </Button>
               </div>
             )}
