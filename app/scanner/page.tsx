@@ -6,7 +6,12 @@ import { BrowserMultiFormatReader } from '@zxing/browser'
 import { NotFoundException } from '@zxing/library'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
-import { searchByISBN, bookDataToLivroInsert, type BookData } from '@/lib/book-api'
+import {
+  searchByISBN,
+  getIsbnSearchVariants,
+  bookDataToLivroInsert,
+  type BookData,
+} from '@/lib/book-api'
 import {
   attachStreamToVideo,
   getCameraErrorMessage,
@@ -107,24 +112,29 @@ export default function ScannerPage() {
 
   const fetchBook = useCallback(
     async (rawIsbn: string, restartCameraOnError = false) => {
-      const isbn = rawIsbn.replace(/[^0-9Xx]/g, '')
+      const variants = getIsbnSearchVariants(rawIsbn)
+      const isbn = variants[0] ?? rawIsbn.replace(/[^0-9Xx]/g, '')
 
       setLoading(true)
       setError(null)
 
       try {
-        if (isbn.length < 10) {
+        if (variants.length === 0 || isbn.length < 10) {
           setStatusMsg(null)
-          setError(`ISBN inválido (${isbn || 'vazio'}). Use 10 ou 13 dígitos.`)
+          setError(
+            `Código inválido (${rawIsbn || 'vazio'}). Escaneie o ISBN/EAN do livro (978… ou 979…).`,
+          )
           if (restartCameraOnError) {
             setNeedsUserTap(true)
           }
           return
         }
 
-        setStatusMsg(`ISBN detectado: ${isbn} — buscando livro...`)
+        setStatusMsg(
+          `Código: ${rawIsbn.trim()} → tentando: ${variants.join(', ')}`,
+        )
 
-        const book = await searchByISBN(isbn)
+        const book = await searchByISBN(rawIsbn)
 
         setStatusMsg(
           `Resultado da API: ${book ? book.titulo : 'não encontrado'}`,
@@ -132,7 +142,7 @@ export default function ScannerPage() {
 
         if (!book) {
           setError(
-            'Livro não encontrado nas APIs. Toque em "Permitir câmera" para escanear outro.',
+            `Livro não encontrado para ${variants.join(' / ')}. Confira se o código é de um livro (EAN 978/979) ou digite o ISBN manualmente.`,
           )
           setNeedsUserTap(true)
           return
@@ -152,11 +162,13 @@ export default function ScannerPage() {
           return
         }
 
+        const canonicalIsbn = book.isbn || isbn
+
         const { data: existente, error: dupError } = await supabase
           .from('livros')
           .select('id')
           .eq('user_id', user.id)
-          .eq('isbn', isbn)
+          .eq('isbn', canonicalIsbn)
           .maybeSingle()
 
         if (dupError) {
