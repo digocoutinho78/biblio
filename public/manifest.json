@@ -1,0 +1,86 @@
+{
+  "name": "Bibliô - Catálogo de Livros",
+  "short_name": "Bibliô",
+  "description": "Organize sua biblioteca pessoal com Bibliô. Adicione livros via código de barras ou busca manual, avalie e organize suas leituras.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#000000",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-light-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/icon.svg",
+      "sizes": "540x720",
+      "type": "image/svg+xml",
+      "form_factor": "narrow"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "1280x720",
+      "type": "image/svg+xml",
+      "form_factor": "wide"
+    }
+  ],
+  "categories": ["productivity", "lifestyle"],
+  "shortcuts": [
+    {
+      "name": "Adicionar Livro",
+      "short_name": "Adicionar",
+      "description": "Comece a adicionar um novo livro à sua biblioteca",
+      "url": "/scanner",
+      "icons": [
+        {
+          "src": "/icon.svg",
+          "sizes": "96x96",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Buscar Livros",
+      "short_name": "Buscar",
+      "description": "Busque livros por título ou autor",
+      "url": "/search",
+      "icons": [
+        {
+          "src": "/icon.svg",
+          "sizes": "96x96",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Painel Admin",
+      "short_name": "Admin",
+      "description": "Gerencie sua biblioteca",
+      "url": "/admin",
+      "icons": [
+        {
+          "src": "/icon.svg",
+          "sizes": "96x96",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}
