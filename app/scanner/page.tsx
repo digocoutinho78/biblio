@@ -10,9 +10,10 @@ import { searchByISBN, type BookData } from '@/lib/book-api'
 import {
   attachStreamToVideo,
   getCameraErrorMessage,
-  isIosSafari,
+  getCameraPermissionHint,
   pickRearCameraStream,
   requestCameraStream,
+  syncCameraPermissionState,
 } from '@/lib/scanner/camera'
 import { createClient } from '@/lib/supabase/client'
 
@@ -218,6 +219,8 @@ export default function ScannerPage() {
   useEffect(() => {
     readerRef.current = new BrowserMultiFormatReader()
 
+    void syncCameraPermissionState().then(setCameraPermission)
+
     const onVisibilityChange = () => {
       if (document.hidden) {
         void stopCamera()
@@ -417,11 +420,7 @@ export default function ScannerPage() {
               {needsUserTap && !cameraActive && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-background/95 px-5 text-center">
                   <p className="text-sm text-muted-foreground leading-relaxed">
-                    {cameraPermission === 'denied'
-                      ? isIosSafari()
-                        ? 'Câmera bloqueada. Toque em "aA" na barra do Safari → Configurações do site → Câmera → Permitir.'
-                        : 'Câmera bloqueada. Toque no cadeado na barra de endereço → Câmera → Permitir.'
-                      : 'Aponte para o código de barras do livro. Toque abaixo para ativar a câmera traseira.'}
+                    {getCameraPermissionHint(cameraPermission === 'denied')}
                   </p>
                   <Button
                     type="button"
