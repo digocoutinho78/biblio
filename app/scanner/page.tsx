@@ -1,115 +1,232 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { BrowserMultiFormatReader } from '@zxing/browser'
+import { NotFoundException } from '@zxing/library'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { searchByISBN, type BookData } from '@/lib/book-api'
+import { createClient } from '@/lib/supabase/client'
+
+const REAR_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
+  video: { facingMode: { exact: 'environment' } },
+}
+
+const FALLBACK_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
+  video: { facingMode: { ideal: 'environment' } },
+}
 
 export default function ScannerPage() {
   const router = useRouter()
+  const supabase = createClient()
   const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const readerRef = useRef<BrowserMultiFormatReader | null>(null)
+  const scannerControlsRef = useRef<{ stop: () => void } | null>(null)
+  const processingRef = useRef(false)
+
   const [scanning, setScanning] = useState(false)
   const [bookData, setBookData] = useState<BookData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [cameraPermission, setCameraPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt')
+  const [cameraPermission, setCameraPermission] = useState<
+    'granted' | 'denied' | 'prompt'
+  >('prompt')
 
-  // Request camera permission
-  useEffect(() => {
-    const requestCamera = async () => {
-      try {
-        const permissions = await navigator.permissions.query({ name: 'camera' })
-        setCameraPermission(permissions.state as any)
+  const stopCamera = useCallback(async () => {
+    scannerControlsRef.current?.stop()
+    scannerControlsRef.current = null
+    readerRef.current?.reset()
 
-        if (videoRef.current && permissions.state === 'granted') {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-          videoRef.current.srcObject = stream
-          setScanning(true)
-        }
-      } catch (err) {
-        console.error('[v0] Camera error:', err)
-        setCameraPermission('denied')
-      }
+    if (videoRef.current?.srcObject) {
+      const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
+      tracks.forEach((track) => track.stop())
+      videoRef.current.srcObject = null
     }
 
-    requestCamera()
-
-    return () => {
-      if (videoRef.current && videoRef.current.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
-        tracks.forEach(track => track.stop())
-      }
-    }
+    setScanning(false)
+    processingRef.current = false
   }, [])
 
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        setScanning(true)
-        setCameraPermission('granted')
+  const startCameraRef = useRef<(() => Promise<void>) | null>(null)
+
+  const fetchBook = useCallback(
+    async (rawIsbn: string, restartCameraOnError = true) => {
+      const isbn = rawIsbn.replace(/[^0-9Xx]/g, '')
+
+      if (isbn.length < 10) {
+        setError('ISBN inválido')
+        if (restartCameraOnError) {
+          await startCameraRef.current?.()
+        }
+        return
       }
+
+      setLoading(true)
+      setError(null)
+
+      const book = await searchByISBN(isbn)
+
+      if (!book) {
+        setError('Livro não encontrado. Tente outro ISBN ou busque manualmente.')
+        setLoading(false)
+        if (restartCameraOnError) {
+          await startCameraRef.current?.()
+        }
+        return
+      }
+
+      const { data: existente } = await supabase
+        .from('livros')
+        .select('id')
+        .eq('isbn', isbn)
+        .maybeSingle()
+
+      if (existente) {
+        setError('Este livro já está na sua estante')
+        setBookData(null)
+        setLoading(false)
+        if (restartCameraOnError) {
+          await startCameraRef.current?.()
+        }
+        return
+      }
+
+      setBookData(book)
+      setLoading(false)
+    },
+    [supabase],
+  )
+
+  const startScanning = useCallback(
+    async (reader: BrowserMultiFormatReader, video: HTMLVideoElement) => {
+      const onDecode = async (
+        result: { getText: () => string } | undefined,
+        decodeError: unknown,
+      ) => {
+        if (result && !processingRef.current) {
+          processingRef.current = true
+          const isbn = result.getText()
+          navigator.vibrate?.(200)
+          await stopCamera()
+          await fetchBook(isbn)
+          return
+        }
+
+        if (
+          decodeError &&
+          !(decodeError instanceof NotFoundException) &&
+          !(decodeError as Error)?.name?.includes('NotFoundException')
+        ) {
+          console.error('[scanner] decode error:', decodeError)
+        }
+      }
+
+      try {
+        scannerControlsRef.current = await reader.decodeFromConstraints(
+          REAR_CAMERA_CONSTRAINTS,
+          video,
+          onDecode,
+        )
+      } catch {
+        scannerControlsRef.current = await reader.decodeFromConstraints(
+          FALLBACK_CAMERA_CONSTRAINTS,
+          video,
+          onDecode,
+        )
+      }
+    },
+    [fetchBook, stopCamera],
+  )
+
+  const startCamera = useCallback(async () => {
+    try {
+      setError(null)
+      processingRef.current = false
+
+      if (!readerRef.current) {
+        readerRef.current = new BrowserMultiFormatReader()
+      }
+
+      const video = videoRef.current
+      if (!video) {
+        return
+      }
+
+      await stopCamera()
+
+      setScanning(true)
+      setCameraPermission('granted')
+      await startScanning(readerRef.current, video)
     } catch (err) {
-      console.error('[v0] Camera error:', err)
+      console.error('[scanner] Camera error:', err)
       setError('Não foi possível acessar a câmera')
       setCameraPermission('denied')
+      setScanning(false)
     }
-  }
+  }, [startScanning, stopCamera])
 
-  const captureFrame = async () => {
-    if (!videoRef.current || !canvasRef.current) return
+  startCameraRef.current = startCamera
 
-    const context = canvasRef.current.getContext('2d')
-    if (!context) return
+  useEffect(() => {
+    readerRef.current = new BrowserMultiFormatReader()
+    void startCameraRef.current?.()
 
-    canvasRef.current.width = videoRef.current.videoWidth
-    canvasRef.current.height = videoRef.current.videoHeight
-    context.drawImage(videoRef.current, 0, 0)
-
-    // Try to decode barcode using canvas image
-    setLoading(true)
-    setError(null)
-
-    try {
-      // For now, we'll use a simple manual ISBN input approach
-      // In production, you'd use a barcode scanning library like jsQR or ZXing
-      setError('Scanner não implementado. Use a busca manual.')
-    } catch (err) {
-      setError('Erro ao processar código de barras')
-    } finally {
-      setLoading(false)
+    return () => {
+      void stopCamera()
+      readerRef.current = null
     }
-  }
+  }, [stopCamera])
 
   const handleManualISBN = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
     const isbn = formData.get('isbn') as string
 
-    if (!isbn || isbn.length < 10) {
-      setError('ISBN inválido')
-      return
-    }
+    await stopCamera()
+    await fetchBook(isbn, false)
+  }
 
-    setLoading(true)
+  const handleSaveBook = async () => {
+    if (!bookData) return
+
+    setSaving(true)
     setError(null)
 
-    const book = await searchByISBN(isbn.replace(/[^0-9]/g, ''))
-    if (book) {
-      setBookData(book)
-      setScanning(false)
-      if (videoRef.current && videoRef.current.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
-        tracks.forEach(track => track.stop())
-      }
-    } else {
-      setError('Livro não encontrado. Tente outro ISBN ou busque manualmente.')
-    }
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
 
-    setLoading(false)
+      if (!user) {
+        router.push('/auth/login')
+        return
+      }
+
+      const { error: insertError } = await supabase.from('livros').insert({
+        user_id: user.id,
+        isbn: bookData.isbn,
+        titulo: bookData.titulo,
+        autor: bookData.autor,
+        editora: bookData.editora,
+        descricao: bookData.descricao,
+        capa_url: bookData.capaUrl,
+        data_publicacao: bookData.dataPublicacao || null,
+      })
+
+      if (insertError) {
+        setError('Erro ao salvar livro: ' + insertError.message)
+        return
+      }
+
+      router.push('/')
+    } catch (err) {
+      console.error('[scanner] Save error:', err)
+      setError('Erro ao salvar livro')
+    } finally {
+      setSaving(false)
+    }
   }
 
   // Show book confirmation if found
@@ -186,22 +303,31 @@ export default function ScannerPage() {
                   </div>
                 )}
 
+                {error && (
+                  <div className="p-4 bg-destructive/10 text-destructive rounded-lg">
+                    <p className="text-sm">{error}</p>
+                  </div>
+                )}
+
                 <div className="flex gap-4 pt-6">
                   <Button
-                    onClick={() => {
+                    onClick={async () => {
                       setBookData(null)
-                      setScanning(true)
+                      setError(null)
+                      await startCamera()
                     }}
                     variant="outline"
                     className="flex-1"
+                    disabled={saving}
                   >
                     Cancelar
                   </Button>
                   <Button
-                    onClick={() => router.push('/confirm?book=' + encodeURIComponent(JSON.stringify(bookData)))}
+                    onClick={handleSaveBook}
                     className="flex-1"
+                    disabled={saving}
                   >
-                    Confirmar e Salvar
+                    {saving ? 'Salvando...' : 'Confirmar e Salvar'}
                   </Button>
                 </div>
               </div>
@@ -232,9 +358,9 @@ export default function ScannerPage() {
                 ref={videoRef}
                 autoPlay
                 playsInline
+                muted
                 className="w-full h-96 object-cover"
               />
-              <canvas ref={canvasRef} className="hidden" />
 
               {scanning && (
                 <div className="absolute inset-0 pointer-events-none">
@@ -244,12 +370,8 @@ export default function ScannerPage() {
             </div>
 
             {cameraPermission === 'granted' && scanning && (
-              <Button
-                onClick={captureFrame}
-                className="w-full mt-4"
-                disabled={loading}
-              >
-                {loading ? 'Processando...' : 'Capturar Código de Barras'}
+              <Button className="w-full mt-4" disabled={loading}>
+                {loading ? 'Processando...' : 'Escaneando...'}
               </Button>
             )}
 
