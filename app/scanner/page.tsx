@@ -6,7 +6,7 @@ import { BrowserMultiFormatReader } from '@zxing/browser'
 import { NotFoundException } from '@zxing/library'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
-import { searchByISBN, type BookData } from '@/lib/book-api'
+import { searchByISBN, bookDataToLivroInsert, type BookData } from '@/lib/book-api'
 import {
   attachStreamToVideo,
   getCameraErrorMessage,
@@ -33,6 +33,7 @@ export default function ScannerPage() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [statusMsg, setStatusMsg] = useState<string | null>(null)
   const [cameraPermission, setCameraPermission] = useState<
     'granted' | 'denied' | 'prompt'
   >('prompt')
@@ -108,42 +109,87 @@ export default function ScannerPage() {
     async (rawIsbn: string, restartCameraOnError = false) => {
       const isbn = rawIsbn.replace(/[^0-9Xx]/g, '')
 
-      if (isbn.length < 10) {
-        setError('ISBN inválido')
-        if (restartCameraOnError) {
-          setNeedsUserTap(true)
-        }
-        return
-      }
-
       setLoading(true)
       setError(null)
 
-      const book = await searchByISBN(isbn)
+      try {
+        if (isbn.length < 10) {
+          setStatusMsg(null)
+          setError(`ISBN inválido (${isbn || 'vazio'}). Use 10 ou 13 dígitos.`)
+          if (restartCameraOnError) {
+            setNeedsUserTap(true)
+          }
+          return
+        }
 
-      if (!book) {
-        setError('Livro não encontrado. Toque em "Permitir câmera" para escanear outro.')
-        setLoading(false)
+        setStatusMsg(`ISBN detectado: ${isbn} — buscando livro...`)
+
+        const book = await searchByISBN(isbn)
+
+        setStatusMsg(
+          `Resultado da API: ${book ? book.titulo : 'não encontrado'}`,
+        )
+
+        if (!book) {
+          setError(
+            'Livro não encontrado nas APIs. Toque em "Permitir câmera" para escanear outro.',
+          )
+          setNeedsUserTap(true)
+          return
+        }
+
+        setStatusMsg('Verificando se o livro já está na estante...')
+
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser()
+
+        if (authError || !user) {
+          setStatusMsg(null)
+          setError('Faça login para adicionar livros à sua estante.')
+          setNeedsUserTap(true)
+          return
+        }
+
+        const { data: existente, error: dupError } = await supabase
+          .from('livros')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('isbn', isbn)
+          .maybeSingle()
+
+        if (dupError) {
+          console.error('[scanner] Erro duplicata:', dupError)
+          setStatusMsg(null)
+          setError(`Erro ao verificar duplicata: ${dupError.message}`)
+          setNeedsUserTap(true)
+          return
+        }
+
+        setStatusMsg('Verificação Supabase concluída')
+
+        if (existente) {
+          setError('Este livro já está na sua estante')
+          setBookData(null)
+          setNeedsUserTap(true)
+          return
+        }
+
+        setStatusMsg(null)
+        setBookData(book)
+      } catch (err) {
+        console.error('[scanner] fetchBook error:', err)
+        setStatusMsg(null)
+        setError(
+          err instanceof Error
+            ? `Erro ao buscar livro: ${err.message}`
+            : 'Erro inesperado ao buscar livro',
+        )
         setNeedsUserTap(true)
-        return
-      }
-
-      const { data: existente } = await supabase
-        .from('livros')
-        .select('id')
-        .eq('isbn', isbn)
-        .maybeSingle()
-
-      if (existente) {
-        setError('Este livro já está na sua estante')
-        setBookData(null)
+      } finally {
         setLoading(false)
-        setNeedsUserTap(true)
-        return
       }
-
-      setBookData(book)
-      setLoading(false)
     },
     [supabase],
   )
@@ -261,16 +307,9 @@ export default function ScannerPage() {
         return
       }
 
-      const { error: insertError } = await supabase.from('livros').insert({
-        user_id: user.id,
-        isbn: bookData.isbn,
-        titulo: bookData.titulo,
-        autor: bookData.autor,
-        editora: bookData.editora,
-        descricao: bookData.descricao,
-        capa_url: bookData.capaUrl,
-        data_publicacao: bookData.dataPublicacao || null,
-      })
+      const { error: insertError } = await supabase
+        .from('livros')
+        .insert(bookDataToLivroInsert(bookData, user.id))
 
       if (insertError) {
         setError('Erro ao salvar livro: ' + insertError.message)
@@ -369,6 +408,7 @@ export default function ScannerPage() {
                     onClick={() => {
                       setBookData(null)
                       setError(null)
+                      setStatusMsg(null)
                       setNeedsUserTap(true)
                     }}
                     variant="outline"
@@ -447,11 +487,19 @@ export default function ScannerPage() {
               )}
             </div>
 
-            {cameraActive && scanning && (
-              <p className="mt-3 text-center text-sm text-muted-foreground">
-                {loading ? 'Buscando livro...' : 'Escaneando automaticamente...'}
+            {statusMsg && (
+              <p className="mt-3 text-center text-sm text-primary font-medium px-2">
+                {statusMsg}
               </p>
             )}
+
+            {(cameraActive && scanning) || loading ? (
+              !statusMsg && (
+                <p className="mt-3 text-center text-sm text-muted-foreground">
+                  {loading ? 'Buscando livro...' : 'Escaneando automaticamente...'}
+                </p>
+              )
+            ) : null}
 
             {error && (
               <div className="mt-4 p-4 bg-destructive/10 text-destructive rounded-lg">

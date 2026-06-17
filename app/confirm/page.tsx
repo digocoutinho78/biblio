@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import type { BookData } from '@/lib/book-api'
+import { bookDataToLivroInsert, type BookData } from '@/lib/book-api'
 
 function ConfirmPageContent() {
   const router = useRouter()
@@ -54,14 +54,7 @@ function ConfirmPageContent() {
       const { error: insertError } = await supabase
         .from('livros')
         .insert({
-          user_id: user.id,
-          isbn: bookData.isbn,
-          titulo: bookData.titulo,
-          autor: bookData.autor,
-          editora: bookData.editora,
-          descricao: bookData.descricao,
-          capa_url: bookData.capaUrl,
-          data_publicacao: bookData.dataPublicacao || null,
+          ...bookDataToLivroInsert(bookData, user.id),
           leitura_completa: leituraCompleta,
           avaliacao: avaliacao > 0 ? avaliacao : null,
           notas: notas || null,
