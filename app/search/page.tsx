@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AppShell } from '@/components/layout/app-shell'
+import { GoogleShoppingLink } from '@/components/books/google-shopping-link'
 import { type BookData } from '@/lib/book-api'
 import { cn } from '@/lib/utils'
 
@@ -35,10 +36,14 @@ export default function SearchPage() {
     setSearchResults([])
 
     try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 8000)
+
       const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(
         searchQuery,
       )}&maxResults=12`
-      const response = await fetch(url)
+      const response = await fetch(url, { signal: controller.signal })
+      clearTimeout(timeout)
       const data = await response.json()
 
       if (data.items && data.items.length > 0) {
@@ -144,34 +149,45 @@ export default function SearchPage() {
       {searchResults.length > 0 && (
         <div className="grid grid-cols-2 gap-3">
           {searchResults.map((book, index) => (
-            <button
+            <div
               key={index}
-              type="button"
-              onClick={() =>
-                router.push(
-                  '/confirm?book=' + encodeURIComponent(JSON.stringify(book)),
-                )
-              }
-              className="text-left rounded-2xl border border-border bg-card overflow-hidden shadow-soft hover:shadow-md transition-shadow"
+              className="rounded-2xl border border-border bg-card overflow-hidden shadow-soft"
             >
-              <div className="aspect-[3/4] bg-muted">
-                <img
-                  src={book.capaUrl}
-                  alt={book.titulo}
-                  className="h-full w-full object-cover"
-                  onError={(e) => {
-                    const img = e.target as HTMLImageElement
-                    img.src = '/default-book-cover.png'
-                  }}
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(
+                    '/confirm?book=' + encodeURIComponent(JSON.stringify(book)),
+                  )
+                }
+                className="w-full text-left hover:shadow-md transition-shadow"
+              >
+                <div className="aspect-[3/4] bg-muted">
+                  <img
+                    src={book.capaUrl}
+                    alt={book.titulo}
+                    className="h-full w-full object-cover"
+                    onError={(e) => {
+                      const img = e.target as HTMLImageElement
+                      img.src = '/default-book-cover.png'
+                    }}
+                  />
+                </div>
+                <div className="p-3">
+                  <h3 className="font-medium text-sm line-clamp-2">{book.titulo}</h3>
+                  <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                    {book.autor}
+                  </p>
+                </div>
+              </button>
+              <div className="px-3 pb-3">
+                <GoogleShoppingLink
+                  titulo={book.titulo}
+                  autor={book.autor}
+                  className="min-h-10 text-xs rounded-xl"
                 />
               </div>
-              <div className="p-3">
-                <h3 className="font-medium text-sm line-clamp-2">{book.titulo}</h3>
-                <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-                  {book.autor}
-                </p>
-              </div>
-            </button>
+            </div>
           ))}
         </div>
       )}
@@ -184,8 +200,9 @@ export default function SearchPage() {
 
       {loading && (
         <div className="text-center py-12">
-          <div className="inline-block size-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <p className="text-muted-foreground mt-4 text-sm">Buscando livros...</p>
+          <div className="inline-block size-16 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="font-semibold text-lg mt-6">Buscando livros...</p>
+          <p className="text-muted-foreground text-sm mt-1">{searchQuery}</p>
         </div>
       )}
     </AppShell>

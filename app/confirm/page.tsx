@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { bookDataToLivroInsert, type BookData } from '@/lib/book-api'
 import { AppShell } from '@/components/layout/app-shell'
+import { GoogleShoppingLink } from '@/components/books/google-shopping-link'
 
 function ConfirmPageContent() {
   const router = useRouter()
@@ -19,6 +20,7 @@ function ConfirmPageContent() {
   const [leituraCompleta, setLeituraCompleta] = useState(false)
   const [avaliacao, setAvaliacao] = useState(0)
   const [notas, setNotas] = useState('')
+  const [comentario, setComentario] = useState('')
   const supabase = createClient()
 
   useEffect(() => {
@@ -54,12 +56,14 @@ function ConfirmPageContent() {
 
       const { error: insertError } = await supabase
         .from('livros')
-        .insert({
-          ...bookDataToLivroInsert(bookData, user.id),
-          leitura_completa: leituraCompleta,
-          avaliacao: avaliacao > 0 ? avaliacao : null,
-          notas: notas || null,
-        })
+        .insert(
+          bookDataToLivroInsert(bookData, user.id, {
+            leitura_completa: leituraCompleta,
+            avaliacao: avaliacao > 0 ? avaliacao : null,
+            notas: notas.trim() || null,
+            comentario: comentario.trim() || null,
+          }),
+        )
 
       if (insertError) {
         console.error('[confirm] Insert error:', insertError)
@@ -160,7 +164,21 @@ function ConfirmPageContent() {
                 rows={3}
               />
             </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Comentário (opcional)
+              </label>
+              <textarea
+                value={comentario}
+                onChange={(e) => setComentario(e.target.value)}
+                placeholder="Suas impressões sobre o livro..."
+                className="w-full rounded-2xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+                rows={3}
+              />
+            </div>
           </div>
+
+          <GoogleShoppingLink titulo={bookData.titulo} autor={bookData.autor} />
 
           {error && (
             <div className="p-4 bg-destructive/10 text-destructive rounded-2xl text-sm">

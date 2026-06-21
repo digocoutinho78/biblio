@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AppShell } from '@/components/layout/app-shell'
+import { GoogleShoppingLink } from '@/components/books/google-shopping-link'
 import { cn } from '@/lib/utils'
 
 interface Livro {
@@ -18,6 +19,7 @@ interface Livro {
   isbn: string
   leitura_completa: boolean
   avaliacao: number | null
+  comentario: string | null
   capa_url: string
   data_adicao: string
 }
@@ -116,6 +118,7 @@ export default function AdminPage() {
       'ISBN',
       'Lido',
       'Avaliação',
+      'Comentário',
       'Data Adicionado',
     ]
     const rows = filteredBooks.map((book) => [
@@ -125,6 +128,7 @@ export default function AdminPage() {
       book.isbn,
       book.leitura_completa ? 'Sim' : 'Não',
       book.avaliacao ? `${book.avaliacao}/5` : 'N/A',
+      book.comentario || '',
       new Date(book.data_adicao).toLocaleDateString('pt-BR'),
     ])
 
@@ -277,42 +281,73 @@ export default function AdminPage() {
           {filteredBooks.map((book) => (
             <div
               key={book.id}
-              className="flex gap-3 rounded-2xl border border-border bg-card p-3 shadow-soft"
+              className="rounded-2xl border border-border bg-card p-3 shadow-soft space-y-3"
             >
-              <img
-                src={book.capa_url}
-                alt={book.titulo}
-                className="size-16 rounded-lg object-cover shrink-0 bg-muted"
-                onError={(e) => {
-                  const img = e.target as HTMLImageElement
-                  img.src = '/default-book-cover.png'
-                }}
-              />
-              <div className="flex-1 min-w-0">
-                <h3 className="font-medium text-sm line-clamp-2 leading-snug">
-                  {book.titulo}
-                </h3>
-                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
-                  {book.autor}
-                </p>
-                <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                  <span>{book.leitura_completa ? '✓ Lido' : '○ Não lido'}</span>
-                  <span>{book.avaliacao ? `${book.avaliacao}★` : '—'}</span>
+              <div className="flex gap-3">
+                <img
+                  src={book.capa_url}
+                  alt={book.titulo}
+                  className="size-16 rounded-lg object-cover shrink-0 bg-muted"
+                  onError={(e) => {
+                    const img = e.target as HTMLImageElement
+                    img.src = '/default-book-cover.png'
+                  }}
+                />
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium text-sm line-clamp-2 leading-snug">
+                    {book.titulo}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                    {book.autor}
+                  </p>
+                  <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                    <span>{book.leitura_completa ? '✓ Lido' : '○ Não lido'}</span>
+                    <StarRating value={book.avaliacao} />
+                  </div>
+                  {book.comentario && (
+                    <p className="text-xs text-muted-foreground mt-2 line-clamp-2 italic">
+                      &ldquo;{book.comentario}&rdquo;
+                    </p>
+                  )}
                 </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => deleteBook(book.id)}
+                  className="shrink-0 self-start"
+                >
+                  Deletar
+                </Button>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => deleteBook(book.id)}
-                className="shrink-0 self-center"
-              >
-                Deletar
-              </Button>
+              <GoogleShoppingLink
+                titulo={book.titulo}
+                autor={book.autor}
+                className="min-h-10 text-xs rounded-xl"
+              />
             </div>
           ))}
         </div>
       )}
     </AppShell>
+  )
+}
+
+function StarRating({ value }: { value: number | null }) {
+  if (!value) {
+    return <span>—</span>
+  }
+
+  return (
+    <span className="flex gap-0.5">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <span
+          key={star}
+          className={star <= value ? 'text-amber-400' : 'text-muted-foreground/30'}
+        >
+          ★
+        </span>
+      ))}
+    </span>
   )
 }
 

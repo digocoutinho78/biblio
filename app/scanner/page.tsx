@@ -22,6 +22,7 @@ import {
 } from '@/lib/scanner/camera'
 import { createClient } from '@/lib/supabase/client'
 import { AppShell } from '@/components/layout/app-shell'
+import { GoogleShoppingLink } from '@/components/books/google-shopping-link'
 
 export default function ScannerPage() {
   const router = useRouter()
@@ -37,6 +38,9 @@ export default function ScannerPage() {
   const [needsUserTap, setNeedsUserTap] = useState(true)
   const [bookData, setBookData] = useState<BookData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [isbnAtual, setIsbnAtual] = useState('')
+  const [avaliacao, setAvaliacao] = useState(0)
+  const [comentario, setComentario] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
@@ -118,6 +122,7 @@ export default function ScannerPage() {
 
       setLoading(true)
       setError(null)
+      setIsbnAtual(rawIsbn.trim())
 
       try {
         if (variants.length === 0 || isbn.length < 10) {
@@ -322,7 +327,12 @@ export default function ScannerPage() {
 
       const { error: insertError } = await supabase
         .from('livros')
-        .insert(bookDataToLivroInsert(bookData, user.id))
+        .insert(
+          bookDataToLivroInsert(bookData, user.id, {
+            avaliacao: avaliacao > 0 ? avaliacao : null,
+            comentario: comentario.trim() || null,
+          }),
+        )
 
       if (insertError) {
         setError('Erro ao salvar livro: ' + insertError.message)
@@ -336,6 +346,27 @@ export default function ScannerPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  if (loading) {
+    return (
+      <AppShell hideNav>
+        <div className="min-h-[70dvh] flex flex-col items-center justify-center gap-6 px-4">
+          <div className="size-16 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+          <div className="text-center">
+            <p className="font-semibold text-lg">Buscando livro...</p>
+            {isbnAtual && (
+              <p className="text-muted-foreground text-sm mt-1">
+                ISBN: {isbnAtual}
+              </p>
+            )}
+            {statusMsg && (
+              <p className="text-primary text-sm mt-2 font-medium">{statusMsg}</p>
+            )}
+          </div>
+        </div>
+      </AppShell>
+    )
   }
 
   if (bookData) {
@@ -407,6 +438,41 @@ export default function ScannerPage() {
                   </div>
                 )}
 
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">
+                    Avaliação
+                  </label>
+                  <div className="flex gap-1 mt-1">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        onClick={() => setAvaliacao(star)}
+                        className={`text-2xl transition-transform hover:scale-110 ${
+                          avaliacao >= star ? 'text-amber-400' : 'text-muted-foreground/40'
+                        }`}
+                      >
+                        ★
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">
+                    Comentário (opcional)
+                  </label>
+                  <textarea
+                    value={comentario}
+                    onChange={(e) => setComentario(e.target.value)}
+                    placeholder="Suas impressões sobre o livro..."
+                    className="w-full mt-1 px-3 py-2 border border-border rounded-2xl bg-background text-sm resize-none outline-none focus:ring-2 focus:ring-primary/20"
+                    rows={3}
+                  />
+                </div>
+
+                <GoogleShoppingLink titulo={bookData.titulo} autor={bookData.autor} />
+
                 {error && (
                   <div className="p-4 bg-destructive/10 text-destructive rounded-lg">
                     <p className="text-sm">{error}</p>
@@ -420,6 +486,8 @@ export default function ScannerPage() {
                       setBookData(null)
                       setError(null)
                       setStatusMsg(null)
+                      setAvaliacao(0)
+                      setComentario('')
                       setNeedsUserTap(true)
                     }}
                     variant="outline"
@@ -505,13 +573,11 @@ export default function ScannerPage() {
               </p>
             )}
 
-            {(cameraActive && scanning) || loading ? (
-              !statusMsg && (
-                <p className="mt-3 text-center text-sm text-muted-foreground">
-                  {loading ? 'Buscando livro...' : 'Escaneando automaticamente...'}
-                </p>
-              )
-            ) : null}
+            {cameraActive && scanning && !statusMsg && (
+              <p className="mt-3 text-center text-sm text-muted-foreground">
+                Escaneando automaticamente...
+              </p>
+            )}
 
             {error && (
               <div className="mt-4 p-4 bg-destructive/10 text-destructive rounded-lg">
