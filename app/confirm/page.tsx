@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { bookDataToLivroInsert, type BookData } from '@/lib/book-api'
+import { AppShell } from '@/components/layout/app-shell'
 
 function ConfirmPageContent() {
   const router = useRouter()
@@ -27,7 +28,7 @@ function ConfirmPageContent() {
         const book = JSON.parse(decodeURIComponent(bookParam))
         setBookData(book)
       } catch (err) {
-        console.error('[v0] Error parsing book data:', err)
+        console.error('[confirm] Error parsing book data:', err)
         router.push('/')
       }
     } else {
@@ -61,15 +62,14 @@ function ConfirmPageContent() {
         })
 
       if (insertError) {
-        console.error('[v0] Insert error:', insertError)
+        console.error('[confirm] Insert error:', insertError)
         setError('Erro ao salvar livro: ' + insertError.message)
         return
       }
 
-      // Success - redirect to library
       router.push('/')
     } catch (err) {
-      console.error('[v0] Save error:', err)
+      console.error('[confirm] Save error:', err)
       setError('Erro ao salvar livro')
     } finally {
       setSaving(false)
@@ -78,160 +78,151 @@ function ConfirmPageContent() {
 
   if (!bookData) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-2xl font-semibold mb-2">Bibliô</div>
-          <div className="text-muted-foreground">Carregando...</div>
+      <AppShell hideNav>
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <div className="text-center">
+            <p className="font-heading text-2xl italic">Bibliô</p>
+            <p className="text-muted-foreground text-sm mt-2">Carregando...</p>
+          </div>
         </div>
-      </div>
+      </AppShell>
     )
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
-        <Link href="/">
-          <Button variant="outline" className="mb-6">
-            ← Voltar
-          </Button>
-        </Link>
+    <AppShell hideNav>
+      <Link href="/search">
+        <Button variant="outline" className="mb-4 min-h-11">
+          ← Voltar
+        </Button>
+      </Link>
 
-        <div className="max-w-2xl mx-auto">
-          <h1 className="text-3xl font-bold mb-8">Salvando Livro</h1>
+      <h1 className="font-heading text-2xl italic mb-6">Salvar na biblioteca</h1>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* Book Cover */}
-            <div className="flex justify-center">
-              <img
-                src={bookData.capaUrl}
-                alt={bookData.titulo}
-                className="w-full max-w-xs h-auto object-cover rounded-lg shadow-lg"
-                onError={(e) => {
-                  const img = e.target as HTMLImageElement
-                  img.src = '/default-book-cover.png'
-                }}
+      <div className="rounded-3xl border border-border bg-card p-4 shadow-soft">
+        <div className="flex justify-center mb-6">
+          <img
+            src={bookData.capaUrl}
+            alt={bookData.titulo}
+            className="w-full max-w-xs rounded-2xl object-cover shadow-soft"
+            onError={(e) => {
+              const img = e.target as HTMLImageElement
+              img.src = '/default-book-cover.png'
+            }}
+          />
+        </div>
+
+        <div className="space-y-4">
+          <Field label="Título" value={bookData.titulo} large />
+          <Field label="Autor" value={bookData.autor} />
+          <Field label="Editora" value={bookData.editora} />
+
+          <div className="border-t border-border pt-4 space-y-4">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={leituraCompleta}
+                onChange={(e) => setLeituraCompleta(e.target.checked)}
+                className="size-4 rounded border-border text-primary"
+              />
+              <span className="text-sm font-medium">Já li este livro</span>
+            </label>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Avaliação (1-5 estrelas)
+              </label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setAvaliacao(avaliacao === star ? 0 : star)}
+                    className={`text-2xl transition-transform hover:scale-110 ${
+                      avaliacao >= star ? 'text-amber-400' : 'text-muted-foreground/40'
+                    }`}
+                  >
+                    ★
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Notas pessoais
+              </label>
+              <textarea
+                value={notas}
+                onChange={(e) => setNotas(e.target.value)}
+                placeholder="Adicione suas notas sobre este livro..."
+                className="w-full rounded-2xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+                rows={3}
               />
             </div>
+          </div>
 
-            {/* Book Details & Options */}
-            <div className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-1">
-                  Título
-                </label>
-                <p className="text-lg font-semibold">{bookData.titulo}</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-1">
-                  Autor
-                </label>
-                <p className="text-lg">{bookData.autor}</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-1">
-                  Editora
-                </label>
-                <p className="text-lg">{bookData.editora}</p>
-              </div>
-
-              {/* Checkboxes and Inputs */}
-              <div className="border-t pt-6 space-y-4">
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="leituraCompleta"
-                    checked={leituraCompleta}
-                    onChange={(e) => setLeituraCompleta(e.target.checked)}
-                    className="mr-3 w-4 h-4 rounded cursor-pointer"
-                  />
-                  <label
-                    htmlFor="leituraCompleta"
-                    className="text-sm font-medium cursor-pointer"
-                  >
-                    Já li este livro
-                  </label>
-                </div>
-
-                {/* Rating */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Avaliação (1-5 estrelas)
-                  </label>
-                  <div className="flex gap-2">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        onClick={() => setAvaliacao(avaliacao === star ? 0 : star)}
-                        className={`text-2xl cursor-pointer transition-transform hover:scale-110 ${
-                          avaliacao >= star ? 'text-yellow-400' : 'text-gray-300'
-                        }`}
-                      >
-                        ★
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Notes */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Notas Pessoais
-                  </label>
-                  <textarea
-                    value={notas}
-                    onChange={(e) => setNotas(e.target.value)}
-                    placeholder="Adicione suas notas sobre este livro..."
-                    className="w-full px-3 py-2 border rounded-lg bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-none"
-                    rows={3}
-                  />
-                </div>
-              </div>
-
-              {/* Error */}
-              {error && (
-                <div className="p-4 bg-destructive/10 text-destructive rounded-lg">
-                  <p className="text-sm">{error}</p>
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex gap-4 pt-6">
-                <Button
-                  onClick={() => window.history.back()}
-                  variant="outline"
-                  className="flex-1"
-                  disabled={saving}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  onClick={handleSaveBook}
-                  className="flex-1"
-                  disabled={saving}
-                >
-                  {saving ? 'Salvando...' : 'Salvar na Biblioteca'}
-                </Button>
-              </div>
+          {error && (
+            <div className="p-4 bg-destructive/10 text-destructive rounded-2xl text-sm">
+              {error}
             </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row gap-3 pt-4">
+            <Button
+              onClick={() => window.history.back()}
+              variant="outline"
+              className="flex-1 min-h-12"
+              disabled={saving}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSaveBook}
+              className="flex-1 min-h-12"
+              disabled={saving}
+            >
+              {saving ? 'Salvando...' : 'Salvar na Biblioteca'}
+            </Button>
           </div>
         </div>
       </div>
+    </AppShell>
+  )
+}
+
+function Field({
+  label,
+  value,
+  large,
+}: {
+  label: string
+  value: string
+  large?: boolean
+}) {
+  return (
+    <div>
+      <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </label>
+      <p className={large ? 'text-lg font-semibold mt-1' : 'text-base mt-1'}>
+        {value}
+      </p>
     </div>
   )
 }
 
 export default function ConfirmPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-2xl font-semibold mb-2">Bibliô</div>
-          <div className="text-muted-foreground">Carregando...</div>
-        </div>
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <AppShell hideNav>
+          <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground">
+            Carregando...
+          </div>
+        </AppShell>
+      }
+    >
       <ConfirmPageContent />
     </Suspense>
   )

@@ -4,8 +4,11 @@ export const dynamic = 'force-dynamic'
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
 import Link from 'next/link'
+import { Download } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { AppShell } from '@/components/layout/app-shell'
+import { cn } from '@/lib/utils'
 
 interface Livro {
   id: string
@@ -21,7 +24,9 @@ interface Livro {
 
 export default function AdminPage() {
   const router = useRouter()
-  const [supabase, setSupabase] = useState<any>(null)
+  const [supabase, setSupabase] = useState<ReturnType<
+    typeof import('@/lib/supabase/client').createClient
+  > | null>(null)
   const [livros, setLivros] = useState<Livro[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -30,7 +35,6 @@ export default function AdminPage() {
   const [sortBy, setSortBy] = useState<'data' | 'titulo' | 'autor'>('data')
 
   useEffect(() => {
-    // Import Supabase client only on client-side
     const { createClient } = require('@/lib/supabase/client')
     setSupabase(createClient())
   }, [])
@@ -49,21 +53,19 @@ export default function AdminPage() {
           return
         }
 
-        let query = supabase
+        const { data, error } = await supabase
           .from('livros')
           .select('*')
           .eq('user_id', user.id)
 
-        const { data, error } = await query
-
         if (error) {
-          console.error('[v0] Error loading books:', error)
+          console.error('[admin] Error loading books:', error)
           return
         }
 
         setLivros(data || [])
       } catch (err) {
-        console.error('[v0] Load error:', err)
+        console.error('[admin] Load error:', err)
       } finally {
         setLoading(false)
       }
@@ -72,45 +74,38 @@ export default function AdminPage() {
     loadBooks()
   }, [router, supabase])
 
-  // Filter and search
   let filteredBooks = livros
 
-  // Search filter
   if (searchQuery) {
     filteredBooks = filteredBooks.filter(
       (book) =>
         book.titulo.toLowerCase().includes(searchQuery.toLowerCase()) ||
         book.autor.toLowerCase().includes(searchQuery.toLowerCase()) ||
         book.editora.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        book.isbn.includes(searchQuery)
+        book.isbn.includes(searchQuery),
     )
   }
 
-  // Read status filter
   if (filterLido === 'lido') {
     filteredBooks = filteredBooks.filter((book) => book.leitura_completa)
   } else if (filterLido === 'nao-lido') {
     filteredBooks = filteredBooks.filter((book) => !book.leitura_completa)
   }
 
-  // Rating filter
   if (filterAvaliacao > 0) {
     filteredBooks = filteredBooks.filter(
-      (book) => book.avaliacao && book.avaliacao >= filterAvaliacao
+      (book) => book.avaliacao && book.avaliacao >= filterAvaliacao,
     )
   }
 
-  // Sort
   filteredBooks = [...filteredBooks].sort((a, b) => {
     if (sortBy === 'titulo') {
       return a.titulo.localeCompare(b.titulo)
-    } else if (sortBy === 'autor') {
+    }
+    if (sortBy === 'autor') {
       return a.autor.localeCompare(b.autor)
     }
-    // Default: by date (newest first)
-    return (
-      new Date(b.data_adicao).getTime() - new Date(a.data_adicao).getTime()
-    )
+    return new Date(b.data_adicao).getTime() - new Date(a.data_adicao).getTime()
   })
 
   const exportToCSV = () => {
@@ -156,199 +151,192 @@ export default function AdminPage() {
     const { error } = await supabase.from('livros').delete().eq('id', id)
 
     if (error) {
-      console.error('[v0] Delete error:', error)
+      console.error('[admin] Delete error:', error)
     } else {
       setLivros(livros.filter((book) => book.id !== id))
     }
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold">Painel Admin</h1>
-          <Link href="/">
-            <Button variant="outline">← Voltar</Button>
+    <AppShell>
+      <section className="pt-2 pb-4 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-heading text-[2rem] leading-tight tracking-tight">
+            Coleção{' '}
+            <span className="text-primary italic">completa</span>
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {livros.length} livros no total
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={exportToCSV}
+          className="shrink-0 gap-2 mt-1"
+        >
+          <Download className="size-4" />
+          Exportar CSV
+        </Button>
+      </section>
+
+      <section className="rounded-3xl border border-border bg-card p-4 shadow-soft mb-6">
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Buscar na coleção..."
+          className="w-full min-h-11 rounded-full border border-border bg-background px-4 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 mb-4"
+        />
+
+        <div className="flex flex-wrap gap-2 mb-4">
+          <FilterPill
+            active={filterLido === 'todos'}
+            onClick={() => setFilterLido('todos')}
+          >
+            Todos
+          </FilterPill>
+          <FilterPill
+            active={filterLido === 'lido'}
+            onClick={() => setFilterLido('lido')}
+          >
+            Lidos
+          </FilterPill>
+          <FilterPill
+            active={filterLido === 'nao-lido'}
+            onClick={() => setFilterLido('nao-lido')}
+          >
+            Não lidos
+          </FilterPill>
+          <FilterPill
+            active={filterAvaliacao === 0}
+            onClick={() => setFilterAvaliacao(0)}
+          >
+            Qualquer nota
+          </FilterPill>
+          {[5, 4, 3].map((n) => (
+            <FilterPill
+              key={n}
+              active={filterAvaliacao === n}
+              onClick={() => setFilterAvaliacao(n)}
+            >
+              {n}★+
+            </FilterPill>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground shrink-0">Ordenar:</span>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as 'data' | 'titulo' | 'autor')}
+            className="flex-1 min-h-10 rounded-full border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+          >
+            <option value="data">Data adicionado</option>
+            <option value="titulo">Título</option>
+            <option value="autor">Autor</option>
+          </select>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 mt-4 text-center">
+          <div className="rounded-xl bg-muted/60 py-2">
+            <p className="font-heading text-lg">{filteredBooks.length}</p>
+            <p className="text-[10px] uppercase text-muted-foreground">Total</p>
+          </div>
+          <div className="rounded-xl bg-muted/60 py-2">
+            <p className="font-heading text-lg">
+              {filteredBooks.filter((b) => b.leitura_completa).length}
+            </p>
+            <p className="text-[10px] uppercase text-muted-foreground">Lidos</p>
+          </div>
+          <div className="rounded-xl bg-muted/60 py-2">
+            <p className="font-heading text-lg">
+              {filteredBooks.filter((b) => !b.leitura_completa).length}
+            </p>
+            <p className="text-[10px] uppercase text-muted-foreground">Pendentes</p>
+          </div>
+        </div>
+      </section>
+
+      {loading ? (
+        <div className="text-center py-16">
+          <div className="inline-block size-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-muted-foreground mt-4 text-sm">Carregando livros...</p>
+        </div>
+      ) : filteredBooks.length === 0 ? (
+        <div
+          className="rounded-3xl border-2 border-dashed border-border bg-card/50 p-10 text-center text-sm text-muted-foreground"
+        >
+          Sua biblioteca está vazia.{' '}
+          <Link href="/search" className="text-primary font-medium hover:underline">
+            Buscar livros →
           </Link>
         </div>
-
-        {/* Controls */}
-        <div className="bg-card border rounded-lg p-6 mb-8">
-          {/* Search */}
-          <div className="mb-6">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por título, autor, editora ou ISBN..."
-              className="w-full px-4 py-2 border rounded-lg bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
-
-          {/* Filters */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div>
-              <label className="block text-sm font-medium mb-2">Status</label>
-              <select
-                value={filterLido}
-                onChange={(e) => setFilterLido(e.target.value as any)}
-                className="w-full px-3 py-2 border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+      ) : (
+        <div className="space-y-3">
+          {filteredBooks.map((book) => (
+            <div
+              key={book.id}
+              className="flex gap-3 rounded-2xl border border-border bg-card p-3 shadow-soft"
+            >
+              <img
+                src={book.capa_url}
+                alt={book.titulo}
+                className="size-16 rounded-lg object-cover shrink-0 bg-muted"
+                onError={(e) => {
+                  const img = e.target as HTMLImageElement
+                  img.src = '/default-book-cover.png'
+                }}
+              />
+              <div className="flex-1 min-w-0">
+                <h3 className="font-medium text-sm line-clamp-2 leading-snug">
+                  {book.titulo}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                  {book.autor}
+                </p>
+                <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                  <span>{book.leitura_completa ? '✓ Lido' : '○ Não lido'}</span>
+                  <span>{book.avaliacao ? `${book.avaliacao}★` : '—'}</span>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => deleteBook(book.id)}
+                className="shrink-0 self-center"
               >
-                <option value="todos">Todos</option>
-                <option value="lido">Lidos</option>
-                <option value="nao-lido">Não Lidos</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Avaliação Mínima
-              </label>
-              <select
-                value={filterAvaliacao}
-                onChange={(e) => setFilterAvaliacao(parseInt(e.target.value))}
-                className="w-full px-3 py-2 border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value={0}>Todas</option>
-                <option value={1}>1★+</option>
-                <option value={2}>2★+</option>
-                <option value={3}>3★+</option>
-                <option value={4}>4★+</option>
-                <option value={5}>5★</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Ordenar Por
-              </label>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="w-full px-3 py-2 border rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="data">Data Adicionado</option>
-                <option value="titulo">Título</option>
-                <option value="autor">Autor</option>
-              </select>
-            </div>
-
-            <div className="flex items-end">
-              <Button onClick={exportToCSV} className="w-full">
-                Exportar CSV
+                Deletar
               </Button>
             </div>
-          </div>
-
-          {/* Stats */}
-          <div className="grid grid-cols-3 gap-4 text-sm">
-            <div className="p-3 bg-background rounded border">
-              <p className="text-muted-foreground text-xs">Total</p>
-              <p className="text-xl font-semibold">{filteredBooks.length}</p>
-            </div>
-            <div className="p-3 bg-background rounded border">
-              <p className="text-muted-foreground text-xs">Lidos</p>
-              <p className="text-xl font-semibold">
-                {filteredBooks.filter((b) => b.leitura_completa).length}
-              </p>
-            </div>
-            <div className="p-3 bg-background rounded border">
-              <p className="text-muted-foreground text-xs">Não Lidos</p>
-              <p className="text-xl font-semibold">
-                {filteredBooks.filter((b) => !b.leitura_completa).length}
-              </p>
-            </div>
-          </div>
+          ))}
         </div>
+      )}
+    </AppShell>
+  )
+}
 
-        {/* Books Table */}
-        {loading ? (
-          <div className="text-center py-12">
-            <div className="inline-block">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-            </div>
-            <p className="text-muted-foreground mt-4">Carregando livros...</p>
-          </div>
-        ) : filteredBooks.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground text-lg">
-              Nenhum livro encontrado
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto border rounded-lg">
-            <table className="w-full">
-              <thead className="bg-muted border-b">
-                <tr>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">
-                    Capa
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">
-                    Título
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">
-                    Autor
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">
-                    Editora
-                  </th>
-                  <th className="px-4 py-3 text-center text-sm font-semibold">
-                    Lido
-                  </th>
-                  <th className="px-4 py-3 text-center text-sm font-semibold">
-                    Nota
-                  </th>
-                  <th className="px-4 py-3 text-center text-sm font-semibold">
-                    Ações
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filteredBooks.map((book) => (
-                  <tr key={book.id} className="hover:bg-muted/50">
-                    <td className="px-4 py-3">
-                      <img
-                        src={book.capa_url}
-                        alt={book.titulo}
-                        className="h-12 w-8 object-cover rounded"
-                        onError={(e) => {
-                          const img = e.target as HTMLImageElement
-                          img.src = '/default-book-cover.png'
-                        }}
-                      />
-                    </td>
-                    <td className="px-4 py-3 text-sm font-medium max-w-xs truncate">
-                      {book.titulo}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground max-w-xs truncate">
-                      {book.autor}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground max-w-xs truncate">
-                      {book.editora}
-                    </td>
-                    <td className="px-4 py-3 text-center text-sm">
-                      {book.leitura_completa ? '✓' : '○'}
-                    </td>
-                    <td className="px-4 py-3 text-center text-sm">
-                      {book.avaliacao ? `${book.avaliacao}★` : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-center text-sm space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => deleteBook(book.id)}
-                      >
-                        Deletar
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
+function FilterPill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
+        active
+          ? 'bg-foreground text-background'
+          : 'border border-border bg-card text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
   )
 }

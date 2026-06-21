@@ -21,6 +21,7 @@ import {
   syncCameraPermissionState,
 } from '@/lib/scanner/camera'
 import { createClient } from '@/lib/supabase/client'
+import { AppShell } from '@/components/layout/app-shell'
 
 export default function ScannerPage() {
   const router = useRouter()
@@ -339,23 +340,21 @@ export default function ScannerPage() {
 
   if (bookData) {
     return (
-      <div className="min-h-[100dvh] bg-background pb-[max(1rem,env(safe-area-inset-bottom))]">
-        <div className="container mx-auto px-4 py-6">
-          <Link href="/">
-            <Button variant="outline" className="mb-4 min-h-11">
-              ← Voltar
-            </Button>
-          </Link>
+      <AppShell hideNav>
+        <Link href="/">
+          <Button variant="outline" className="mb-4 min-h-11">
+            ← Voltar
+          </Button>
+        </Link>
 
-          <div className="max-w-2xl mx-auto">
-            <h1 className="text-2xl font-bold mb-6">Confirmar Livro</h1>
+        <h1 className="font-heading text-2xl italic mb-6">Confirmar livro</h1>
 
-            <div className="grid grid-cols-1 gap-6">
+        <div className="rounded-3xl border border-border bg-card p-4 shadow-soft space-y-6">
               <div className="flex justify-center">
                 <img
                   src={bookData.capaUrl}
                   alt={bookData.titulo}
-                  className="w-full max-w-xs h-auto object-cover rounded-lg shadow-lg"
+                  className="w-full max-w-xs mx-auto h-auto object-cover rounded-2xl shadow-soft"
                   onError={(e) => {
                     const img = e.target as HTMLImageElement
                     img.src = '/default-book-cover.png'
@@ -439,26 +438,27 @@ export default function ScannerPage() {
                   </Button>
                 </div>
               </div>
-            </div>
-          </div>
         </div>
-      </div>
+      </AppShell>
     )
   }
 
   return (
-    <div className="min-h-[100dvh] bg-background pb-[max(1rem,env(safe-area-inset-bottom))] overscroll-y-contain">
-      <div className="container mx-auto px-4 py-4">
-        <Link href="/">
-          <Button variant="outline" className="mb-4 min-h-11">
-            ← Voltar
-          </Button>
-        </Link>
+    <AppShell hideNav>
+      <Link href="/">
+        <Button variant="outline" className="mb-4 min-h-11">
+          ← Voltar
+        </Button>
+      </Link>
 
-        <div className="max-w-2xl mx-auto">
-          <h1 className="text-2xl font-bold mb-4">Adicionar Livro</h1>
+      <h1 className="font-heading text-2xl mb-1">
+        Adicionar <span className="text-primary italic">livro</span>
+      </h1>
+      <p className="text-sm text-muted-foreground mb-4">
+        Escaneie o código de barras ou digite o ISBN.
+      </p>
 
-          <div className="mb-6">
+      <div className="mb-6">
             <div className="relative bg-black rounded-xl overflow-hidden border aspect-[3/4] max-h-[55dvh] w-full">
               <video
                 ref={videoRef}
@@ -552,7 +552,7 @@ export default function ScannerPage() {
                 autoComplete="off"
                 enterKeyHint="search"
                 placeholder="Ex: 9788535929706"
-                className="w-full min-h-12 px-4 py-2 text-base border rounded-lg bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                className="w-full min-h-12 px-4 py-2 text-base border border-border rounded-full bg-card focus:outline-none focus:ring-2 focus:ring-primary/20"
               />
               <p className="text-xs text-muted-foreground mt-1">
                 ISBN de 10 ou 13 dígitos
@@ -571,8 +571,6 @@ export default function ScannerPage() {
               </Button>
             </Link>
           </div>
-        </div>
-      </div>
-    </div>
+    </AppShell>
   )
 }

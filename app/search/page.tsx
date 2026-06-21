@@ -2,9 +2,18 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import Link from 'next/link'
-import { searchGoogleBooks, type BookData } from '@/lib/book-api'
+import { AppShell } from '@/components/layout/app-shell'
+import { type BookData } from '@/lib/book-api'
+import { cn } from '@/lib/utils'
+
+const SUGGESTIONS = [
+  'Machado de Assis',
+  'Clarice Lispector',
+  'Ficção científica',
+  'Ítalo Calvino',
+]
 
 export default function SearchPage() {
   const router = useRouter()
@@ -26,20 +35,29 @@ export default function SearchPage() {
     setSearchResults([])
 
     try {
-      // Search using Google Books API
       const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(
-        searchQuery
+        searchQuery,
       )}&maxResults=12`
       const response = await fetch(url)
       const data = await response.json()
 
       if (data.items && data.items.length > 0) {
-        const books: BookData[] = data.items.map((item: any) => {
+        const books: BookData[] = data.items.map((item: {
+          volumeInfo: {
+            title?: string
+            authors?: string[]
+            publisher?: string
+            description?: string
+            imageLinks?: { thumbnail?: string }
+            publishedDate?: string
+            industryIdentifiers?: { identifier: string }[]
+          }
+        }) => {
           const book = item.volumeInfo
           const isbn = book.industryIdentifiers?.[0]?.identifier || ''
 
           return {
-            isbn: isbn,
+            isbn,
             titulo: book.title || 'Título desconhecido',
             autor:
               book.authors && book.authors.length > 0
@@ -48,7 +66,8 @@ export default function SearchPage() {
             editora: book.publisher || 'Editora desconhecida',
             descricao: book.description || '',
             capaUrl:
-              book.imageLinks?.thumbnail || '/default-book-cover.png',
+              book.imageLinks?.thumbnail?.replace('http:', 'https:') ||
+              '/default-book-cover.png',
             dataPublicacao: book.publishedDate || '',
           }
         })
@@ -58,116 +77,117 @@ export default function SearchPage() {
         setError('Nenhum livro encontrado. Tente outra busca.')
       }
     } catch (err) {
-      console.error('[v0] Search error:', err)
+      console.error('[search] error:', err)
       setError('Erro ao buscar livros. Tente novamente.')
     } finally {
       setLoading(false)
     }
   }
 
+  const runSuggestion = (text: string) => {
+    setSearchQuery(text)
+  }
+
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
-        <Link href="/">
-          <Button variant="outline" className="mb-6">
-            ← Voltar
-          </Button>
-        </Link>
+    <AppShell>
+      <section className="pt-2 pb-4">
+        <h1 className="font-heading text-[2rem] leading-tight tracking-tight">
+          Descobrir{' '}
+          <span className="text-primary italic">livros</span>
+        </h1>
+        <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+          Busque por título, autor ou ISBN. Resultados em tempo real do Google
+          Books.
+        </p>
+      </section>
 
-        <div className="max-w-4xl mx-auto">
-          <h1 className="text-3xl font-bold mb-8">Buscar Livros</h1>
-
-          {/* Search Form */}
-          <form onSubmit={handleSearch} className="mb-8">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar por título, autor, ou ISBN..."
-                className="flex-1 px-4 py-2 border rounded-lg bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-              <Button type="submit" disabled={loading}>
-                {loading ? 'Buscando...' : 'Buscar'}
-              </Button>
-            </div>
-          </form>
-
-          {/* Error Message */}
-          {error && (
-            <div className="mb-6 p-4 bg-destructive/10 text-destructive rounded-lg">
-              <p>{error}</p>
-            </div>
-          )}
-
-          {/* Search Results Grid */}
-          {searchResults.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {searchResults.map((book, index) => (
-                <div
-                  key={index}
-                  onClick={() =>
-                    router.push(
-                      '/confirm?book=' + encodeURIComponent(JSON.stringify(book))
-                    )
-                  }
-                  className="cursor-pointer group"
-                >
-                  <div className="bg-card border rounded-lg overflow-hidden hover:shadow-lg transition-shadow h-full flex flex-col">
-                    {/* Book Cover */}
-                    <div className="relative overflow-hidden bg-muted">
-                      <img
-                        src={book.capaUrl}
-                        alt={book.titulo}
-                        className="w-full aspect-[3/4] object-cover group-hover:scale-105 transition-transform"
-                        onError={(e) => {
-                          const img = e.target as HTMLImageElement
-                          img.src = '/default-book-cover.png'
-                        }}
-                      />
-                    </div>
-
-                    {/* Book Info */}
-                    <div className="p-3 flex-1 flex flex-col">
-                      <h3 className="font-semibold text-sm line-clamp-2 mb-1">
-                        {book.titulo}
-                      </h3>
-                      <p className="text-xs text-muted-foreground line-clamp-1">
-                        {book.autor}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-auto pt-2">
-                        {book.editora}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Empty State */}
-          {!loading && searchResults.length === 0 && !error && (
-            <div className="text-center py-12">
-              <div className="text-4xl mb-4">📚</div>
-              <p className="text-muted-foreground">
-                Comece digitando um título ou autor para buscar livros
-              </p>
-            </div>
-          )}
-
-          {/* Loading State */}
-          {loading && (
-            <div className="text-center py-12">
-              <div className="inline-block">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-              </div>
-              <p className="text-muted-foreground mt-4">
-                Buscando livros...
-              </p>
-            </div>
-          )}
+      <form onSubmit={handleSearch} className="mb-4">
+        <div className="relative">
+          <Search
+            className="absolute left-4 top-1/2 -translate-y-1/2 size-5 text-muted-foreground pointer-events-none"
+          />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Ex: Memórias Póstumas, Ítalo Calvino…"
+            className="w-full min-h-12 rounded-full border-2 border-primary/30 bg-card pl-12 pr-4 text-base shadow-soft outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          />
         </div>
+        <Button type="submit" disabled={loading} className="mt-3 w-full min-h-11">
+          {loading ? 'Buscando...' : 'Buscar'}
+        </Button>
+      </form>
+
+      <div className="flex flex-wrap gap-2 mb-6">
+        {SUGGESTIONS.map((tag) => (
+          <button
+            key={tag}
+            type="button"
+            onClick={() => runSuggestion(tag)}
+            className={cn(
+              'rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground',
+              'hover:border-primary/40 hover:text-foreground transition-colors',
+            )}
+          >
+            {tag}
+          </button>
+        ))}
       </div>
-    </div>
+
+      {error && (
+        <div className="mb-6 rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+
+      {searchResults.length > 0 && (
+        <div className="grid grid-cols-2 gap-3">
+          {searchResults.map((book, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() =>
+                router.push(
+                  '/confirm?book=' + encodeURIComponent(JSON.stringify(book)),
+                )
+              }
+              className="text-left rounded-2xl border border-border bg-card overflow-hidden shadow-soft hover:shadow-md transition-shadow"
+            >
+              <div className="aspect-[3/4] bg-muted">
+                <img
+                  src={book.capaUrl}
+                  alt={book.titulo}
+                  className="h-full w-full object-cover"
+                  onError={(e) => {
+                    const img = e.target as HTMLImageElement
+                    img.src = '/default-book-cover.png'
+                  }}
+                />
+              </div>
+              <div className="p-3">
+                <h3 className="font-medium text-sm line-clamp-2">{book.titulo}</h3>
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                  {book.autor}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!loading && searchResults.length === 0 && !error && (
+        <div className="text-center py-12 text-muted-foreground text-sm">
+          Comece digitando um título ou autor para buscar livros
+        </div>
+      )}
+
+      {loading && (
+        <div className="text-center py-12">
+          <div className="inline-block size-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-muted-foreground mt-4 text-sm">Buscando livros...</p>
+        </div>
+      )}
+    </AppShell>
   )
 }
